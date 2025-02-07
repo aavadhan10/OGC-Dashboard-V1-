@@ -47,20 +47,21 @@ def load_data():
 def get_revenue_band(revenue):
     try:
         if pd.isna(revenue) or revenue == 0:
-            return "0-10M"
+            return "$0–$10M"
         revenue_in_millions = float(revenue) / 1000000
         if revenue_in_millions <= 10:
-            return "0-10M"
+            return "$0–$10M"
         elif revenue_in_millions <= 25:
-            return "10M-25M"
+            return "$10M–$25M"
         elif revenue_in_millions <= 50:
-            return "25M-50M"
+            return "$25M–$50M"
         elif revenue_in_millions <= 75:
-            return "50M-75M"
+            return "$50M–$75M"
         else:
-            return "75M+"
-    except:
-        return "0-10M"
+            return "$75M+"
+    except Exception as e:
+        st.error(f"Error in get_revenue_band for revenue {revenue}: {str(e)}")
+        return "$0–$10M"
 
 # Load data
 six_months_df, attorneys_df, attorney_clients_df, utilization_df, pivot_source_df = load_data()
@@ -135,7 +136,7 @@ if six_months_df is not None:
             )
         
         # Total billable hours
-        total_billable = filtered_df[filtered_df['Activity Type'] == 'Billable']['Hours'].sum()
+        total_billable = filtered_df[filtered_df['Activity Type'].str.strip().str.lower() == 'billable']['Hours'].sum()
         total_hours = filtered_df['Hours'].sum()
         with col2:
             st.metric(
@@ -319,8 +320,15 @@ if six_months_df is not None:
                 'Invoice Count', 'Sector', 'First Service', 'Last Service'
             ]
             
+            # Debug: Check Total Revenue column
+            st.write("Client Metrics Preview:", client_metrics.head())
+            st.write("Total Revenue Summary:", client_metrics['Total Revenue'].describe())
+            
             # Calculate revenue bands
             client_metrics['Revenue Band'] = client_metrics['Total Revenue'].apply(get_revenue_band)
+            
+            # Debug: Check Revenue Band column
+            st.write("Revenue Band Distribution:", client_metrics['Revenue Band'].value_counts())
             
             # Calculate retention period
             client_metrics['Retention Days'] = (
