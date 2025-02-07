@@ -99,37 +99,72 @@ def create_sidebar_filters(df, attorney_df):
         st.subheader("Time Period")
         selected_year = st.selectbox(
             "Year",
-            options=sorted(df['Service Date'].dt.year.unique()),
-            index=len(df['Service Date'].dt.year.unique()) - 1
+            options=sorted(pd.to_datetime(df['Service Date']).dt.year.unique()),
+            index=len(pd.to_datetime(df['Service Date']).dt.year.unique()) - 1
         )
         
         selected_months = st.multiselect(
             "Months",
-            options=sorted(df['Service Date'].dt.month.unique())
+            options=sorted(pd.to_datetime(df['Service Date']).dt.month.unique())
         )
         
         date_range = st.date_input(
             "Custom Date Range",
-            value=(df['Service Date'].min(), df['Service Date'].max())
+            value=(pd.to_datetime(df['Service Date']).min(), pd.to_datetime(df['Service Date']).max())
         )
 
     with filter_tabs[1]:  # Attorney Filters
         st.subheader("Attorney Information")
         selected_attorney_levels = st.multiselect(
-            "Attorney Levels",
+            "Attorney Pipeline Stage",
             options=sorted(attorney_df['Attorney pipeline stage'].unique())
         )
         
         selected_attorneys = st.multiselect(
             "Select Attorneys",
-            options=sorted(df['Associated Attorney'].unique())
+            options=sorted(df['Associated Attorney'].dropna().unique())
         )
 
     with filter_tabs[2]:  # Practice Filters
         st.subheader("Practice Areas")
         selected_practice_areas = st.multiselect(
-            "Practice Areas",
-            options=sorted(df['PG'].unique())
+            "Practice Areas (Primary)",
+            options=sorted(attorney_df['Practice Area (Primary)'].dropna().unique())
+        )
+        
+        selected_practice_areas_secondary = st.multiselect(
+            "Practice Areas (Secondary)",
+            options=sorted(attorney_df['Practice Area (Secondary)'].dropna().unique())
+        )
+
+    with filter_tabs[3]:  # Matter Filters
+        st.subheader("Matter Details")
+        selected_matters = st.multiselect(
+            "Select Matters",
+            options=sorted(df['Matter Name'].dropna().unique())
+        )
+
+    with filter_tabs[4]:  # Financial Filters
+        st.subheader("Financial")
+        min_amount = st.number_input(
+            "Minimum Amount",
+            min_value=float(df['Amount'].min()),
+            max_value=float(df['Amount'].max()),
+            value=float(df['Amount'].min())
+        )
+        
+        rate_range = st.slider(
+            "Rate Range",
+            min_value=float(df['Rate'].min()),
+            max_value=float(df['Rate'].max()),
+            value=(float(df['Rate'].min()), float(df['Rate'].max()))
+        )
+
+    with filter_tabs[5]:  # Client Filters
+        st.subheader("Client Information")
+        selected_clients = st.multiselect(
+            "Select Clients",
+            options=sorted(df['Client Name'].dropna().unique())
         )
 
     # Return all filters in a dictionary
@@ -139,7 +174,12 @@ def create_sidebar_filters(df, attorney_df):
         'date_range': date_range,
         'attorney_levels': selected_attorney_levels,
         'attorneys': selected_attorneys,
-        'practice_areas': selected_practice_areas
+        'practice_areas': selected_practice_areas,
+        'practice_areas_secondary': selected_practice_areas_secondary,
+        'matters': selected_matters,
+        'min_amount': min_amount,
+        'rate_range': rate_range,
+        'clients': selected_clients
     }
 
 def create_attorney_analysis_section(df, attorney_metrics):
