@@ -299,62 +299,57 @@ if six_months_df is not None:
             st.error(f"Error in client analysis: {str(e)}")
 
     with tab3:
-    st.header("Client Segmentation")
+        st.header("Client Segmentation")
+        
+        try:
+            # Calculate comprehensive client metrics
+            client_metrics = filtered_df.groupby('Client Name').agg({
+                'Amount': ['sum', 'mean'],
+                'Hours': ['sum', 'mean'],
+                'Matter Name': 'nunique',
+                'Invoice Number': 'nunique',
+                'SECTOR': lambda x: x.iloc[0] if not x.empty else None,
+                'Service Date': ['min', 'max']
+            }).reset_index()
 
-    try:
-        # Calculate comprehensive client metrics
-        client_metrics = filtered_df.groupby('Client Name').agg({
-            'Amount': ['sum', 'mean'],
-            'Hours': ['sum', 'mean'],
-            'Matter Name': 'nunique',
-            'Invoice Number': 'nunique',
-            'SECTOR': lambda x: x.iloc[0] if not x.empty else None,
-            'Service Date': ['min', 'max']
-        }).reset_index()
-
-        # Flatten column names
-        client_metrics.columns = ['Client Name', 'Total Revenue', 'Avg Revenue', 
-                                  'Total Hours', 'Avg Hours', 'Matter Count',
-                                  'Invoice Count', 'Sector', 'First Service', 'Last Service']
-
-        # **FIX: Ensure Total Revenue is numeric**
-        client_metrics['Total Revenue'] = pd.to_numeric(client_metrics['Total Revenue'], errors='coerce').fillna(0)
-
-        # **FIX: Apply the corrected revenue band function**
-        client_metrics['Revenue Band'] = client_metrics['Total Revenue'].apply(get_revenue_band)
-
-        # Debugging: Check distribution of revenue bands
-        st.write("Revenue Band Counts:", client_metrics['Revenue Band'].value_counts())
-
-        # **Revenue Band Distribution Visualization**
-        st.subheader("Revenue Distribution")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            revenue_dist = client_metrics['Revenue Band'].value_counts().reindex(
-                ["0-10M", "10M-25M", "25M-50M", "50M-75M", "75M+"], fill_value=0
-            )  # Ensure all categories show
-            fig = px.pie(
-                values=revenue_dist.values,
-                names=revenue_dist.index,
-                title="Clients by Revenue Band"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col2:
-            revenue_total = client_metrics.groupby('Revenue Band')['Total Revenue'].sum().reindex(
-                ["0-10M", "10M-25M", "25M-50M", "50M-75M", "75M+"], fill_value=0
-            )  # Ensure all bands show
-            fig = px.pie(
-                values=revenue_total.values,
-                names=revenue_total.index,
-                title="Revenue by Band"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-    except Exception as e:
-        st.error(f"Error in client segmentation analysis: {str(e)}")
+            # Flatten column names
+            client_metrics.columns = ['Client Name', 'Total Revenue', 'Avg Revenue', 
+                                    'Total Hours', 'Avg Hours', 'Matter Count',
+                                    'Invoice Count', 'Sector', 'First Service', 'Last Service']
+            
+            # Calculate revenue bands
+            client_metrics['Revenue Band'] = client_metrics['Total Revenue'].apply(get_revenue_band)
+            
+            # Calculate retention period
+            client_metrics['Retention Days'] = (
+                client_metrics['Last Service'] - client_metrics['First Service']
+            ).dt.days
+            
+            # Calculate Lifetime Value
+            client_metrics['Daily Revenue'] = client_metrics['Total Revenue'] / client_metrics['Retention Days'].clip(lower=1)
+            client_metrics['Projected Annual Value'] = client_metrics['Daily Revenue'] * 365
+            
+            # Revenue band distribution
+            st.subheader("Revenue Distribution")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                revenue_dist = client_metrics['Revenue Band'].value_counts()
+                fig = px.pie(
+                    values=revenue_dist.values,
+                    names=revenue_dist.index,
+                    title="Clients by Revenue Band"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                revenue_total = client_metrics.groupby('Revenue Band')['Total Revenue'].sum()
+                fig = px.pie(
+                    values=revenue_total.values,
+                    names=revenue_total.index,
+                    title="Revenue by Band"
+                )
+                st.plotly_chart(fig, use_container_width=True)
             
             # Industry Analysis
             st.subheader("Industry Analysis")
