@@ -2,214 +2,207 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 import calendar
 
-# Page config
-st.set_page_config(
-    page_title="OGC Utilization Dashboard",
-    page_icon="⚖️",
-    layout="wide"
-)
+# Set page config
+st.set_page_config(page_title="Law Firm Analytics Dashboard", layout="wide")
 
+# Function to load data
 @st.cache_data
 def load_data():
-    """Load and process all data files"""
-    try:
-        # Load CSV files
-        df = pd.read_csv('SIX_FULL_MOS.csv')
-        df['Service Date'] = pd.to_datetime(df['Service Date'])
-        return df
-    except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
-        return None
+    six_months = pd.read_csv('SIX_FULL_MOS.csv')
+    attorneys = pd.read_csv('ATTORNEY_PG_AND_HRS.csv')
+    attorney_clients = pd.read_csv('ATTORNEY_CLIENTS.csv')
+    
+    # Convert date columns
+    six_months['Service Date'] = pd.to_datetime(six_months['Service Date'])
+    six_months['Invoice Date'] = pd.to_datetime(six_months['Invoice Date'])
+    
+    return six_months, attorneys, attorney_clients
 
-def create_filters(df):
-    """Create sidebar filters"""
-    st.sidebar.header("Filters")
-    
-    # Date filters
-    st.sidebar.subheader("Date Range")
-    date_range = st.sidebar.date_input(
-        "Select period",
-        value=(df['Service Date'].min(), df['Service Date'].max()),
-        min_value=df['Service Date'].min(),
-        max_value=df['Service Date'].max()
-    )
-    
-    # Attorney filters
-    st.sidebar.subheader("Attorney Filters")
-    selected_attorneys = st.sidebar.multiselect(
-        "Select Attorneys",
-        options=sorted(df['Associated Attorney'].unique())
-    )
-    
-    # Practice Group filters
-    st.sidebar.subheader("Practice Groups")
-    selected_pg = st.sidebar.multiselect(
-        "Select Practice Groups",
-        options=sorted(df['PG'].unique())
-    )
-    
-    return date_range, selected_attorneys, selected_pg
+# Load data
+six_months_df, attorneys_df, attorney_clients_df = load_data()
 
-def filter_data(df, date_range, selected_attorneys, selected_pg):
-    """Apply filters to dataframe"""
-    filtered_df = df.copy()
-    
-    # Apply date filter
-    if len(date_range) == 2:
-        filtered_df = filtered_df[
-            (filtered_df['Service Date'].dt.date >= date_range[0]) &
-            (filtered_df['Service Date'].dt.date <= date_range[1])
-        ]
-    
-    # Apply attorney filter
-    if selected_attorneys:
-        filtered_df = filtered_df[
-            filtered_df['Associated Attorney'].isin(selected_attorneys)
-        ]
-    
-    # Apply practice group filter
-    if selected_pg:
-        filtered_df = filtered_df[
-            filtered_df['PG'].isin(selected_pg)
-        ]
-    
-    return filtered_df
+# Sidebar filters
+st.sidebar.header('Filters')
 
-def calculate_metrics(df):
-    """Calculate key metrics"""
-    metrics = {
-        'total_hours': df['Hours'].sum(),
-        'total_amount': df['Amount'].sum(),
-        'avg_rate': df['Amount'].sum() / df['Hours'].sum() if df['Hours'].sum() > 0 else 0,
-        'billable_entries': len(df[df['Activity Type'] == 'Billable']),
-        'total_entries': len(df)
-    }
-    return metrics
+# Date filter
+min_date = six_months_df['Service Date'].min()
+max_date = six_months_df['Service Date'].max()
+date_range = st.sidebar.date_input(
+    "Date Range",
+    value=(min_date, max_date),
+    min_value=min_date,
+    max_value=max_date
+)
 
-def create_overview_section(df, metrics):
-    """Create overview section with key metrics"""
+# Attorney filter
+attorneys = sorted(six_months_df['Associated Attorney'].unique())
+selected_attorneys = st.sidebar.multiselect('Attorneys', attorneys)
+
+# Practice Group filter
+practice_groups = sorted(six_months_df['PG'].unique())
+selected_practices = st.sidebar.multiselect('Practice Groups', practice_groups)
+
+# Matter filter
+matters = sorted(six_months_df['Matter Name'].unique())
+selected_matters = st.sidebar.multiselect('Matters', matters)
+
+# Apply filters
+filtered_df = six_months_df.copy()
+if len(date_range) == 2:
+    filtered_df = filtered_df[
+        (filtered_df['Service Date'] >= pd.to_datetime(date_range[0])) &
+        (filtered_df['Service Date'] <= pd.to_datetime(date_range[1]))
+    ]
+if selected_attorneys:
+    filtered_df = filtered_df[filtered_df['Associated Attorney'].isin(selected_attorneys)]
+if selected_practices:
+    filtered_df = filtered_df[filtered_df['PG'].isin(selected_practices)]
+if selected_matters:
+    filtered_df = filtered_df[filtered_df['Matter Name'].isin(selected_matters)]
+
+# Tabs
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Overview", "Client Analysis", "Attorney Analysis", 
+    "Practice Areas", "Trending"
+])
+
+with tab1:
     st.header("Overview")
     
+    # Key metrics
     col1, col2, col3, col4 = st.columns(4)
     
+    # Monthly bills generated
+    monthly_bills = filtered_df.groupby(filtered_df['Invoice Date'].dt.strftime('%Y-%m'))['Invoice Number'].nunique()
     with col1:
-        st.metric(
-            "Total Hours",
-            f"{metrics['total_hours']:,.1f}"
-        )
+        st.metric("Monthly Bills Generated", monthly_bills.iloc[-1] if not monthly_bills.empty else 0)
     
+    # Monthly matters opened
+    monthly_matters = filtered_df.groupby(filtered_df['Service Date'].dt.strftime('%Y-%m'))['Matter Name'].nunique()
     with col2:
-        st.metric(
-            "Total Amount",
-            f"${metrics['total_amount']:,.2f}"
-        )
+        st.metric("Monthly Matters Opened", monthly_matters.iloc[-1] if not monthly_matters.empty else 0)
     
+    # Firm utilization
+    total_hours = filtered_df['Hours'].sum()
+    billable_hours = filtered_df[filtered_df['Activity Type'] == 'Billable']['Hours'].sum()
+    utilization_rate = (billable_hours / total_hours * 100) if total_hours > 0 else 0
     with col3:
-        st.metric(
-            "Average Rate",
-            f"${metrics['avg_rate']:,.2f}/hr"
-        )
+        st.metric("Firm Utilization", f"{utilization_rate:.1f}%")
     
+    # Average attorney production
+    avg_attorney_production = filtered_df.groupby('Associated Attorney')['Hours'].mean().mean()
     with col4:
-        utilization_rate = (metrics['billable_entries'] / metrics['total_entries'] * 100) if metrics['total_entries'] > 0 else 0
-        st.metric(
-            "Utilization Rate",
-            f"{utilization_rate:.1f}%"
-        )
-
-def create_attorney_section(df):
-    """Create attorney analysis section"""
-    st.header("Attorney Analysis")
+        st.metric("Avg Attorney Production (Hours)", f"{avg_attorney_production:.1f}")
     
-    # Attorney metrics
-    attorney_metrics = df.groupby('Associated Attorney').agg({
-        'Hours': 'sum',
-        'Amount': 'sum',
-        'Time Entry ID': 'count'
-    }).reset_index()
+    # Trending charts
+    st.subheader("Trending Metrics")
     
-    # Create visualization
-    fig = px.scatter(
-        attorney_metrics,
-        x='Hours',
-        y='Amount',
-        hover_name='Associated Attorney',
-        size='Time Entry ID',
-        title='Attorney Performance'
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Add attorney metrics table
-    st.subheader("Attorney Metrics")
-    st.dataframe(
-        attorney_metrics.sort_values('Hours', ascending=False),
-        column_config={
-            'Hours': st.column_config.NumberColumn('Total Hours', format="%.1f"),
-            'Amount': st.column_config.NumberColumn('Total Amount', format="$%.2f"),
-            'Time Entry ID': st.column_config.NumberColumn('Entry Count', format="%d")
-        }
-    )
-
-def create_practice_group_section(df):
-    """Create practice group analysis section"""
-    st.header("Practice Group Analysis")
-    
-    pg_metrics = df.groupby('PG').agg({
+    # Monthly production trend
+    monthly_production = filtered_df.groupby(filtered_df['Service Date'].dt.strftime('%Y-%m')).agg({
         'Hours': 'sum',
         'Amount': 'sum'
     }).reset_index()
     
-    fig = px.bar(
-        pg_metrics,
-        x='PG',
-        y=['Hours', 'Amount'],
-        barmode='group',
-        title='Practice Group Performance'
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=monthly_production['Service Date'],
+        y=monthly_production['Hours'],
+        name='Hours'
+    ))
+    fig.add_trace(go.Scatter(
+        x=monthly_production['Service Date'],
+        y=monthly_production['Amount'],
+        name='Amount',
+        yaxis='y2'
+    ))
+    fig.update_layout(
+        title='Monthly Production Trends',
+        yaxis=dict(title='Hours'),
+        yaxis2=dict(title='Amount', overlaying='y', side='right')
     )
-    
     st.plotly_chart(fig, use_container_width=True)
-    
-    # Add practice group metrics table
-    st.subheader("Practice Group Metrics")
-    st.dataframe(
-        pg_metrics.sort_values('Hours', ascending=False),
-        column_config={
-            'Hours': st.column_config.NumberColumn('Total Hours', format="%.1f"),
-            'Amount': st.column_config.NumberColumn('Total Amount', format="$%.2f")
-        }
-    )
 
-def main():
-    st.title("OGC Utilization Dashboard")
+with tab2:
+    st.header("Client Analysis")
     
-    # Load data
-    df = load_data()
+    # Client metrics
+    clients_df = filtered_df.groupby('Client Name').agg({
+        'Hours': 'sum',
+        'Amount': 'sum',
+        'Matter Name': 'nunique'
+    }).reset_index()
     
-    if df is not None:
-        # Create filters
-        date_range, selected_attorneys, selected_pg = create_filters(df)
-        
-        # Apply filters
-        filtered_df = filter_data(df, date_range, selected_attorneys, selected_pg)
-        
-        # Calculate metrics
-        metrics = calculate_metrics(filtered_df)
-        
-        # Create tabs
-        tabs = st.tabs(["Overview", "Attorney Analysis", "Practice Groups"])
-        
-        with tabs[0]:
-            create_overview_section(filtered_df, metrics)
-        
-        with tabs[1]:
-            create_attorney_section(filtered_df)
-        
-        with tabs[2]:
-            create_practice_group_section(filtered_df)
+    # Top clients by revenue
+    st.subheader("Top Clients by Revenue")
+    top_clients = clients_df.nlargest(10, 'Amount')
+    fig = px.bar(top_clients, x='Client Name', y='Amount',
+                 title='Top 10 Clients by Revenue')
+    st.plotly_chart(fig, use_container_width=True)
 
-if __name__ == "__main__":
-    main()
+with tab3:
+    st.header("Attorney Analysis")
+    
+    # Attorney productivity metrics
+    attorney_metrics = filtered_df.groupby('Associated Attorney').agg({
+        'Hours': 'sum',
+        'Amount': 'sum',
+        'Client Name': 'nunique'
+    }).reset_index()
+    
+    # Attorney utilization rates
+    st.subheader("Attorney Utilization Rates")
+    fig = px.bar(attorney_metrics, x='Associated Attorney', y='Hours',
+                 title='Attorney Hours Distribution')
+    st.plotly_chart(fig, use_container_width=True)
+
+with tab4:
+    st.header("Practice Areas")
+    
+    # Practice area metrics
+    practice_metrics = filtered_df.groupby('PG').agg({
+        'Hours': 'sum',
+        'Amount': 'sum',
+        'Matter Name': 'nunique'
+    }).reset_index()
+    
+    # Practice area distribution
+    st.subheader("Practice Area Distribution")
+    fig = px.pie(practice_metrics, values='Hours', names='PG',
+                 title='Hours by Practice Area')
+    st.plotly_chart(fig, use_container_width=True)
+
+with tab5:
+    st.header("Trending")
+    
+    # Time series analysis
+    monthly_trends = filtered_df.groupby(filtered_df['Service Date'].dt.strftime('%Y-%m')).agg({
+        'Hours': 'sum',
+        'Amount': 'sum',
+        'Invoice Number': 'nunique'
+    }).reset_index()
+    
+    # Trending metrics visualization
+    st.subheader("Monthly Trends")
+    fig = px.line(monthly_trends, x='Service Date', y=['Hours', 'Amount'],
+                  title='Monthly Performance Trends')
+    st.plotly_chart(fig, use_container_width=True)
+
+# Add CSS for better styling
+st.markdown("""
+    <style>
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 24px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #f0f2f6;
+        border-radius: 4px;
+        gap: 12px;
+        padding: 0px 16px;
+    }
+    </style>
+""", unsafe_allow_html=True)
