@@ -371,53 +371,98 @@ if six_months_df is not None:
             # Client Value Analysis
             st.subheader("Client Value Analysis")
             
+            # Calculate LTV metrics
+            client_metrics['Monthly Revenue'] = client_metrics['Total Revenue'] / (client_metrics['Retention Days'] / 30).clip(lower=1)
+            client_metrics['Avg Monthly Revenue'] = client_metrics['Monthly Revenue'].rolling(window=3, min_periods=1).mean()
+            client_metrics['Churn Probability'] = np.where(
+                (recent_date - client_metrics['Last Service']).dt.days > 90,
+                0.8,  # High churn probability for inactive clients
+                0.2   # Lower churn probability for active clients
+            )
+            client_metrics['LTV'] = (client_metrics['Avg Monthly Revenue'] / client_metrics['Churn Probability']) * 12
+            
+            # Calculate revenue band metrics
             value_metrics = client_metrics.groupby('Revenue Band').agg({
                 'Client Name': 'count',
                 'Total Revenue': ['sum', 'mean'],
-                'Projected Annual Value': 'mean',
+                'Monthly Revenue': 'mean',
+                'LTV': ['mean', 'median', 'max'],
                 'Retention Days': ['mean', 'median'],
                 'Matter Count': 'mean'
             }).round(2)
             
             value_metrics.columns = [
-                'Client Count', 'Total Revenue', 'Avg Revenue',
-                'Avg Annual Value', 'Avg Retention', 'Median Retention',
+                'Client Count', 'Total Revenue', 'Avg Revenue', 'Avg Monthly Revenue',
+                'Avg LTV', 'Median LTV', 'Max LTV', 'Avg Retention', 'Median Retention',
                 'Avg Matters'
             ]
             
-            st.dataframe(value_metrics, use_container_width=True)
+            # Add revenue concentration
+            total_revenue = value_metrics['Total Revenue'].sum()
+            value_metrics['Revenue Concentration (%)'] = (value_metrics['Total Revenue'] / total_revenue * 100).round(1)
             
-            # Retention Analysis
-            st.subheader("Retention Analysis")
+            # Display value metrics
+            formatted_metrics = value_metrics.style.format({
+                'Total Revenue': '${:,.2f}',
+                'Avg Revenue': '${:,.2f}',
+                'Avg Monthly Revenue': '${:,.2f}',
+                'Avg LTV': '${:,.2f}',
+                'Median LTV': '${:,.2f}',
+                'Max LTV': '${:,.2f}',
+                'Revenue Concentration (%)': '{:.1f}%'
+            })
             
-            # Calculate churn rate (no activity in last 90 days)
-            recent_date = filtered_df['Service Date'].max()
-            churned = (recent_date - client_metrics['Last Service']).dt.days > 90
-            churn_rate = (churned.sum() / len(churned)) * 100
+            st.dataframe(formatted_metrics, use_container_width=True)
             
-            col1, col2, col3 = st.columns(3)
+            # LTV Analysis
+            st.subheader("Lifetime Value Analysis")
+            
+            col1, col2 = st.columns(2)
             
             with col1:
-                st.metric(
-                    "Overall Churn Rate",
-                    f"{churn_rate:.1f}%",
-                    help="Percentage of clients with no activity in 90+ days"
+                # LTV by Revenue Band
+                fig = px.bar(
+                    x=value_metrics.index,
+                    y=value_metrics['Avg LTV'],
+                    title="Average Lifetime Value by Revenue Band",
+                    labels={'x': 'Revenue Band', 'y': 'Average LTV ($)'}
                 )
+                st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                st.metric(
-                    "Average Retention",
-                    f"{client_metrics['Retention Days'].mean():.0f} days",
-                    help="Average client relationship duration"
+                # Revenue Concentration
+                fig = px.pie(
+                    values=value_metrics['Revenue Concentration (%)'],
+                    names=value_metrics.index,
+                    title="Revenue Concentration by Band"
                 )
+                st.plotly_chart(fig, use_container_width=True)
             
-            with col3:
-                st.metric(
-                    "Active Clients",
-                    f"{(~churned).sum():,}",
-                    help="Number of clients with activity in last 90 days"
-                )
+            # Distribution of LTV
+            st.subheader("LTV Distribution")
+            fig = px.histogram(
+                client_metrics,
+                x='LTV',
+                nbins=50,
+                title='Distribution of Client Lifetime Values',
+                labels={'LTV': 'Lifetime Value ($)'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
             
+            # Top LTV Clients
+            st.subheader("Top Clients by Lifetime Value")
+            top_ltv_clients = client_metrics.nlargest(10, 'LTV')[
+                ['Client Name', 'Revenue Band', 'LTV', 'Total Revenue', 'Retention Days']
+            ].reset_index(drop=True)
+            
+            st.dataframe(
+                top_ltv_clients.style.format({
+                    'LTV': '${:,.2f}',
+                    'Total Revenue': '${:,.2f}',
+                    'Retention Days': '{:,.0f}'
+                }),
+                use_container_width=True
+            )
             # Retention by revenue band
             retention_by_band = client_metrics.groupby('Revenue Band')['Retention Days'].mean().round(0)
             fig = px.bar(
