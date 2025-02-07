@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 # Set page config
-st.set_page_config(page_title="Law Firm Analytics Dashboard", layout="wide")
+st.set_page_config(page_title="OGC Analytics Dashboard", layout="wide")
 
 # Function to load data
 @st.cache_data
