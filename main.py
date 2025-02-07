@@ -371,6 +371,9 @@ if six_months_df is not None:
             # Client Value Analysis
             st.subheader("Client Value Analysis")
             
+            # Get most recent date from the data
+            recent_date = filtered_df['Service Date'].max()
+            
             # Calculate LTV metrics
             client_metrics['Monthly Revenue'] = client_metrics['Total Revenue'] / (client_metrics['Retention Days'] / 30).clip(lower=1)
             client_metrics['Avg Monthly Revenue'] = client_metrics['Monthly Revenue'].rolling(window=3, min_periods=1).mean()
@@ -397,6 +400,72 @@ if six_months_df is not None:
                 'Avg Matters'
             ]
             
+            # Add revenue concentration
+            total_revenue = value_metrics['Total Revenue'].sum()
+            value_metrics['Revenue Concentration (%)'] = (value_metrics['Total Revenue'] / total_revenue * 100).round(1)
+            
+            # Display value metrics
+            formatted_metrics = value_metrics.style.format({
+                'Total Revenue': '${:,.2f}',
+                'Avg Revenue': '${:,.2f}',
+                'Avg Monthly Revenue': '${:,.2f}',
+                'Avg LTV': '${:,.2f}',
+                'Median LTV': '${:,.2f}',
+                'Max LTV': '${:,.2f}',
+                'Revenue Concentration (%)': '{:.1f}%'
+            })
+            
+            st.dataframe(formatted_metrics, use_container_width=True)
+            
+            # LTV Analysis
+            st.subheader("Lifetime Value Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # LTV by Revenue Band
+                fig = px.bar(
+                    x=value_metrics.index,
+                    y=value_metrics['Avg LTV'],
+                    title="Average Lifetime Value by Revenue Band",
+                    labels={'x': 'Revenue Band', 'y': 'Average LTV ($)'}
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Revenue Concentration
+                fig = px.pie(
+                    values=value_metrics['Revenue Concentration (%)'],
+                    names=value_metrics.index,
+                    title="Revenue Concentration by Band"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Distribution of LTV
+            st.subheader("LTV Distribution")
+            fig = px.histogram(
+                client_metrics,
+                x='LTV',
+                nbins=50,
+                title='Distribution of Client Lifetime Values',
+                labels={'LTV': 'Lifetime Value ($)'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Top LTV Clients
+            st.subheader("Top Clients by Lifetime Value")
+            top_ltv_clients = client_metrics.nlargest(10, 'LTV')[
+                ['Client Name', 'Revenue Band', 'LTV', 'Total Revenue', 'Retention Days']
+            ].reset_index(drop=True)
+            
+            st.dataframe(
+                top_ltv_clients.style.format({
+                    'LTV': '${:,.2f}',
+                    'Total Revenue': '${:,.2f}',
+                    'Retention Days': '{:,.0f}'
+                }),
+                use_container_width=True
+            )
             # Add revenue concentration
             total_revenue = value_metrics['Total Revenue'].sum()
             value_metrics['Revenue Concentration (%)'] = (value_metrics['Total Revenue'] / total_revenue * 100).round(1)
