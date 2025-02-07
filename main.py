@@ -313,9 +313,11 @@ if six_months_df is not None:
             }).reset_index()
 
             # Flatten column names
-            client_metrics.columns = ['Client Name', 'Total Revenue', 'Avg Revenue', 
-                                    'Total Hours', 'Avg Hours', 'Matter Count',
-                                    'Invoice Count', 'Sector', 'First Service', 'Last Service']
+            client_metrics.columns = [
+                'Client Name', 'Total Revenue', 'Avg Revenue', 
+                'Total Hours', 'Avg Hours', 'Matter Count',
+                'Invoice Count', 'Sector', 'First Service', 'Last Service'
+            ]
             
             # Calculate revenue bands
             client_metrics['Revenue Band'] = client_metrics['Total Revenue'].apply(get_revenue_band)
@@ -325,7 +327,7 @@ if six_months_df is not None:
                 client_metrics['Last Service'] - client_metrics['First Service']
             ).dt.days
             
-            # Calculate Lifetime Value
+            # Calculate Lifetime Value (LTV)
             client_metrics['Daily Revenue'] = client_metrics['Total Revenue'] / client_metrics['Retention Days'].clip(lower=1)
             client_metrics['Projected Annual Value'] = client_metrics['Daily Revenue'] * 365
             
@@ -334,7 +336,8 @@ if six_months_df is not None:
             col1, col2 = st.columns(2)
             
             with col1:
-                revenue_dist = client_metrics['Revenue Band'].value_counts()
+                # Clients by Revenue Band
+                revenue_dist = client_metrics['Revenue Band'].value_counts().sort_index()
                 fig = px.pie(
                     values=revenue_dist.values,
                     names=revenue_dist.index,
@@ -343,7 +346,8 @@ if six_months_df is not None:
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                revenue_total = client_metrics.groupby('Revenue Band')['Total Revenue'].sum()
+                # Revenue by Band
+                revenue_total = client_metrics.groupby('Revenue Band')['Total Revenue'].sum().sort_index()
                 fig = px.pie(
                     values=revenue_total.values,
                     names=revenue_total.index,
@@ -368,13 +372,12 @@ if six_months_df is not None:
                     barmode='group'
                 )
                 st.plotly_chart(fig, use_container_width=True)
+            
             # Client Value Analysis
             st.subheader("Client Value Analysis")
             
-            # Get most recent date from the data
-            recent_date = filtered_df['Service Date'].max()
-            
             # Calculate LTV metrics
+            recent_date = filtered_df['Service Date'].max()
             client_metrics['Monthly Revenue'] = client_metrics['Total Revenue'] / (client_metrics['Retention Days'] / 30).clip(lower=1)
             client_metrics['Avg Monthly Revenue'] = client_metrics['Monthly Revenue'].rolling(window=3, min_periods=1).mean()
             client_metrics['Churn Probability'] = np.where(
@@ -394,6 +397,7 @@ if six_months_df is not None:
                 'Matter Count': 'mean'
             }).round(2)
             
+            # Flatten column names
             value_metrics.columns = [
                 'Client Count', 'Total Revenue', 'Avg Revenue', 'Avg Monthly Revenue',
                 'Avg LTV', 'Median LTV', 'Max LTV', 'Avg Retention', 'Median Retention',
@@ -405,21 +409,22 @@ if six_months_df is not None:
             value_metrics['Revenue Concentration (%)'] = (value_metrics['Total Revenue'] / total_revenue * 100).round(1)
             
             # Display value metrics
-            formatted_metrics = value_metrics.style.format({
-                'Total Revenue': '${:,.2f}',
-                'Avg Revenue': '${:,.2f}',
-                'Avg Monthly Revenue': '${:,.2f}',
-                'Avg LTV': '${:,.2f}',
-                'Median LTV': '${:,.2f}',
-                'Max LTV': '${:,.2f}',
-                'Revenue Concentration (%)': '{:.1f}%'
-            })
-            
-            st.dataframe(formatted_metrics, use_container_width=True)
+            st.subheader("Revenue Band Metrics")
+            st.dataframe(
+                value_metrics.style.format({
+                    'Total Revenue': '${:,.2f}',
+                    'Avg Revenue': '${:,.2f}',
+                    'Avg Monthly Revenue': '${:,.2f}',
+                    'Avg LTV': '${:,.2f}',
+                    'Median LTV': '${:,.2f}',
+                    'Max LTV': '${:,.2f}',
+                    'Revenue Concentration (%)': '{:.1f}%'
+                }),
+                use_container_width=True
+            )
             
             # LTV Analysis
             st.subheader("Lifetime Value Analysis")
-            
             col1, col2 = st.columns(2)
             
             with col1:
@@ -466,73 +471,9 @@ if six_months_df is not None:
                 }),
                 use_container_width=True
             )
-            # Add revenue concentration
-            total_revenue = value_metrics['Total Revenue'].sum()
-            value_metrics['Revenue Concentration (%)'] = (value_metrics['Total Revenue'] / total_revenue * 100).round(1)
             
-            # Display value metrics
-            formatted_metrics = value_metrics.style.format({
-                'Total Revenue': '${:,.2f}',
-                'Avg Revenue': '${:,.2f}',
-                'Avg Monthly Revenue': '${:,.2f}',
-                'Avg LTV': '${:,.2f}',
-                'Median LTV': '${:,.2f}',
-                'Max LTV': '${:,.2f}',
-                'Revenue Concentration (%)': '{:.1f}%'
-            })
-            
-            st.dataframe(formatted_metrics, use_container_width=True)
-            
-            # LTV Analysis
-            st.subheader("Lifetime Value Analysis")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # LTV by Revenue Band
-                fig = px.bar(
-                    x=value_metrics.index,
-                    y=value_metrics['Avg LTV'],
-                    title="Average Lifetime Value by Revenue Band",
-                    labels={'x': 'Revenue Band', 'y': 'Average LTV ($)'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                # Revenue Concentration
-                fig = px.pie(
-                    values=value_metrics['Revenue Concentration (%)'],
-                    names=value_metrics.index,
-                    title="Revenue Concentration by Band"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Distribution of LTV
-            st.subheader("LTV Distribution")
-            fig = px.histogram(
-                client_metrics,
-                x='LTV',
-                nbins=50,
-                title='Distribution of Client Lifetime Values',
-                labels={'LTV': 'Lifetime Value ($)'}
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Top LTV Clients
-            st.subheader("Top Clients by Lifetime Value")
-            top_ltv_clients = client_metrics.nlargest(10, 'LTV')[
-                ['Client Name', 'Revenue Band', 'LTV', 'Total Revenue', 'Retention Days']
-            ].reset_index(drop=True)
-            
-            st.dataframe(
-                top_ltv_clients.style.format({
-                    'LTV': '${:,.2f}',
-                    'Total Revenue': '${:,.2f}',
-                    'Retention Days': '{:,.0f}'
-                }),
-                use_container_width=True
-            )
-            # Retention by revenue band
+            # Retention by Revenue Band
+            st.subheader("Retention by Revenue Band")
             retention_by_band = client_metrics.groupby('Revenue Band')['Retention Days'].mean().round(0)
             fig = px.bar(
                 x=retention_by_band.index,
@@ -818,4 +759,3 @@ if six_months_df is not None:
 
 else:
     st.error("Failed to load data. Please check your data files and try again.")
-        
