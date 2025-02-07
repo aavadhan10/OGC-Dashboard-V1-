@@ -15,9 +15,9 @@ def load_data():
         # Load main data files
         six_months = pd.read_csv('SIX_FULL_MOS.csv')
         attorneys = pd.read_csv('ATTORNEY_PG_AND_HRS.csv')
-        attorney_clients = pd.read_csv('ATTORNEY_CLIENTS.csv', skiprows=1)  # Skip header row
-        utilization = pd.read_csv('UTILIZATION.csv', skiprows=2)  # Skip header rows
-        pivot_source = pd.read_csv('PIVOT_SOURCE_1.csv', skiprows=1)  # Skip header row
+        attorney_clients = pd.read_csv('ATTORNEY_CLIENTS.csv', skiprows=1)
+        utilization = pd.read_csv('UTILIZATION.csv', skiprows=2)
+        pivot_source = pd.read_csv('PIVOT_SOURCE_1.csv', skiprows=1)
         
         # Convert date columns in six_months
         for date_col in ['Service Date', 'Invoice Date']:
@@ -41,23 +41,26 @@ def load_data():
         return six_months, attorneys, attorney_clients, utilization, pivot_source
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
-        return None, None, None
+        return None, None, None, None, None
 
 # Function to calculate revenue band
 def get_revenue_band(revenue):
-    if pd.isna(revenue) or revenue == 0:
+    try:
+        if pd.isna(revenue) or revenue == 0:
+            return "0-10M"
+        revenue_in_millions = float(revenue) / 1000000
+        if revenue_in_millions <= 10:
+            return "0-10M"
+        elif revenue_in_millions <= 25:
+            return "10M-25M"
+        elif revenue_in_millions <= 50:
+            return "25M-50M"
+        elif revenue_in_millions <= 75:
+            return "50M-75M"
+        else:
+            return "75M+"
+    except:
         return "0-10M"
-    revenue_in_millions = float(revenue) / 1000000
-    if revenue_in_millions <= 10:
-        return "0-10M"
-    elif revenue_in_millions <= 25:
-        return "10M-25M"
-    elif revenue_in_millions <= 50:
-        return "25M-50M"
-    elif revenue_in_millions <= 75:
-        return "50M-75M"
-    else:
-        return "75M+"
 
 # Load data
 six_months_df, attorneys_df, attorney_clients_df, utilization_df, pivot_source_df = load_data()
@@ -159,52 +162,47 @@ if six_months_df is not None:
                 f"${total_revenue:,.2f}",
                 help="Total revenue from all matters"
             )
-        
-        # Time series metrics
-        st.subheader("Monthly Trends")
-        
-        # Calculate monthly metrics
+            
+        # Monthly trends
+        st.subheader("Monthly Performance Trends")
         monthly_metrics = filtered_df.groupby(pd.Grouper(key='Service Date', freq='M')).agg({
             'Hours': 'sum',
             'Amount': 'sum',
-            'Matter Name': 'nunique',
-            'Client Name': 'nunique'
+            'Invoice Number': 'nunique'
         }).reset_index()
         
-        # Create multi-line chart
         fig = go.Figure()
         
         # Add hours trend
-        fig.add_trace(go.Scatter(
+        fig.add_trace(go.Bar(
             x=monthly_metrics['Service Date'],
             y=monthly_metrics['Hours'],
             name='Hours',
-            line=dict(color='blue')
+            yaxis='y'
         ))
         
-        # Add revenue trend on secondary axis
+        # Add revenue trend
         fig.add_trace(go.Scatter(
             x=monthly_metrics['Service Date'],
             y=monthly_metrics['Amount'],
             name='Revenue',
             yaxis='y2',
-            line=dict(color='green')
+            line=dict(color='red')
         ))
         
-        # Update layout
         fig.update_layout(
-            title='Monthly Hours and Revenue Trends',
-            yaxis=dict(title='Hours'),
-            yaxis2=dict(title='Revenue', overlaying='y', side='right'),
-            hovermode='x unified'
+            title='Monthly Hours and Revenue',
+            yaxis=dict(title='Hours', side='left'),
+            yaxis2=dict(title='Revenue', side='right', overlaying='y'),
+            showlegend=True
         )
         
         st.plotly_chart(fig, use_container_width=True)
-        
+
         # Utilization metrics
-        st.subheader("Utilization Metrics")
+        st.subheader("Utilization Overview")
         
-        # Calculate utilization by attorney
+        # Calculate utilization metrics by attorney
         attorney_util = filtered_df.groupby('Associated Attorney').agg({
             'Hours': 'sum',
             'Target Hours': 'first'
@@ -215,60 +213,90 @@ if six_months_df is not None:
             axis=1
         )
         
-        # Create utilization chart
         fig = px.bar(
-            attorney_util,
+            attorney_util.sort_values('Utilization Rate', ascending=False),
             x='Associated Attorney',
             y='Utilization Rate',
-            title='Attorney Utilization Rates (%)',
-            labels={'Utilization Rate': 'Utilization %', 'Associated Attorney': 'Attorney'}
+            title='Attorney Utilization Rates (%)'
         )
         
         fig.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="Target")
-        
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Key metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        # Monthly bills generated
-        monthly_bills = filtered_df.groupby(pd.Grouper(key='Invoice Date', freq='M'))['Invoice Number'].nunique()
-        with col1:
-            st.metric("Monthly Bills Generated", monthly_bills.iloc[-1] if not monthly_bills.empty else 0)
-        
-        # Monthly matters opened
-        monthly_matters = filtered_df.groupby(pd.Grouper(key='Service Date', freq='M'))['Matter Name'].nunique()
-        with col2:
-            st.metric("Monthly Matters Opened", monthly_matters.iloc[-1] if not monthly_matters.empty else 0)
-        
-        # Firm utilization
-        total_hours = filtered_df['Hours'].sum()
-        billable_hours = filtered_df[filtered_df['Activity Type'] == 'Billable']['Hours'].sum()
-        utilization_rate = (billable_hours / total_hours * 100) if total_hours > 0 else 0
-        with col3:
-            st.metric("Firm Utilization", f"{utilization_rate:.1f}%")
-        
-        # Average attorney production
-        avg_attorney_production = filtered_df.groupby('Associated Attorney')['Hours'].mean().mean()
-        with col4:
-            st.metric("Avg Attorney Production (Hours)", f"{avg_attorney_production:.1f}")
 
     with tab2:
         st.header("Client Analysis")
         
-        # Client metrics
-        clients_df = filtered_df.groupby('Client Name').agg({
-            'Hours': 'sum',
-            'Amount': 'sum',
-            'Matter Name': 'nunique'
-        }).reset_index()
-        
-        # Top clients by revenue
-        st.subheader("Top Clients by Revenue")
-        top_clients = clients_df.nlargest(10, 'Amount')
-        fig = px.bar(top_clients, x='Client Name', y='Amount',
-                     title='Top 10 Clients by Revenue')
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            # Client metrics
+            clients_df = filtered_df.groupby('Client Name').agg({
+                'Hours': 'sum',
+                'Amount': 'sum',
+                'Matter Name': 'nunique',
+                'Invoice Number': 'nunique'
+            }).reset_index()
+            
+            # Calculate averages
+            avg_revenue_per_client = clients_df['Amount'].mean()
+            avg_hours_per_client = clients_df['Hours'].mean()
+            
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "Total Clients",
+                    f"{len(clients_df):,}",
+                    help="Number of unique clients"
+                )
+            
+            with col2:
+                st.metric(
+                    "Avg Revenue per Client",
+                    f"${avg_revenue_per_client:,.2f}",
+                    help="Average revenue generated per client"
+                )
+            
+            with col3:
+                st.metric(
+                    "Avg Hours per Client",
+                    f"{avg_hours_per_client:.1f}",
+                    help="Average hours spent per client"
+                )
+            
+            # Top clients by revenue
+            st.subheader("Top Clients by Revenue")
+            top_clients = clients_df.nlargest(10, 'Amount')
+            fig = px.bar(
+                top_clients,
+                x='Client Name',
+                y='Amount',
+                title='Top 10 Clients by Revenue'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Client hours distribution
+            st.subheader("Client Hours Distribution")
+            fig = px.histogram(
+                clients_df,
+                x='Hours',
+                nbins=50,
+                title='Distribution of Hours Across Clients'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Detailed client metrics
+            st.subheader("Detailed Client Metrics")
+            st.dataframe(
+                clients_df.sort_values('Amount', ascending=False)
+                .style.format({
+                    'Amount': '${:,.2f}',
+                    'Hours': '{:,.1f}'
+                }),
+                use_container_width=True
+            )
+            
+        except Exception as e:
+            st.error(f"Error in client analysis: {str(e)}")
 
     with tab3:
         st.header("Client Segmentation")
@@ -340,7 +368,6 @@ if six_months_df is not None:
                     barmode='group'
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            
             # Client Value Analysis
             st.subheader("Client Value Analysis")
             
@@ -401,107 +428,280 @@ if six_months_df is not None:
             )
             st.plotly_chart(fig, use_container_width=True)
             
-        except Exception as
-        
-        try:
-            # Calculate client revenue metrics
-            client_metrics = filtered_df.groupby('Client Name').agg({
-                'Amount': 'sum',
-                'SECTOR': lambda x: x.iloc[0] if not x.empty else None,
-                'Service Date': ['min', 'max']
-            }).reset_index()
-
-            # Rename columns
-            client_metrics.columns = ['Client Name', 'Total Revenue', 'Sector', 'First Service', 'Last Service']
-            
-            # Calculate revenue bands
-            client_metrics['Revenue Band'] = client_metrics['Total Revenue'].apply(get_revenue_band)
-            
-            # Calculate retention period
-            client_metrics['Retention Days'] = (client_metrics['Last Service'] - client_metrics['First Service']).dt.days
-            
-            # Revenue band distribution
-            st.subheader("Revenue Band Distribution")
-            revenue_dist = client_metrics['Revenue Band'].value_counts()
-            fig = px.pie(values=revenue_dist.values, names=revenue_dist.index,
-                        title="Client Distribution by Revenue Band")
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Sector analysis
-            if 'Sector' in client_metrics.columns:
-                st.subheader("Industry Distribution")
-                sector_dist = client_metrics['Sector'].value_counts()
-                fig = px.bar(x=sector_dist.index, y=sector_dist.values,
-                            title="Clients by Industry Sector")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Revenue metrics
-            st.subheader("Revenue Analysis")
-            revenue_analysis = client_metrics.groupby('Revenue Band').agg({
-                'Total Revenue': ['mean', 'sum', 'count'],
-                'Retention Days': 'mean'
-            }).round(2)
-            
-            revenue_analysis.columns = ['Avg Revenue', 'Total Revenue', 'Client Count', 'Avg Retention Days']
-            st.dataframe(revenue_analysis)
-            
-            # Retention analysis
-            st.subheader("Retention Analysis")
-            retention_by_band = client_metrics.groupby('Revenue Band')['Retention Days'].mean().round(0)
-            fig = px.bar(x=retention_by_band.index, y=retention_by_band.values,
-                        title="Average Retention Period by Revenue Band (Days)")
-            st.plotly_chart(fig, use_container_width=True)
-            
         except Exception as e:
             st.error(f"Error in client segmentation analysis: {str(e)}")
 
     with tab4:
         st.header("Attorney Analysis")
         
-        # Attorney productivity metrics
-        attorney_metrics = filtered_df.groupby('Associated Attorney').agg({
-            'Hours': 'sum',
-            'Amount': 'sum',
-            'Client Name': 'nunique'
-        }).reset_index()
-        
-        # Attorney utilization rates
-        st.subheader("Attorney Utilization Rates")
-        fig = px.bar(attorney_metrics, x='Associated Attorney', y='Hours',
-                     title='Attorney Hours Distribution')
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            # Attorney productivity metrics
+            attorney_metrics = filtered_df.groupby('Associated Attorney').agg({
+                'Hours': 'sum',
+                'Amount': 'sum',
+                'Client Name': 'nunique',
+                'Matter Name': 'nunique',
+                'Target Hours': 'first'
+            }).reset_index()
+            
+            # Calculate utilization rate
+            attorney_metrics['Utilization Rate'] = (attorney_metrics['Hours'] / 
+                attorney_metrics['Target Hours'].fillna(100)) * 100
+                
+            # Calculate average hourly rate
+            attorney_metrics['Avg Hourly Rate'] = attorney_metrics['Amount'] / attorney_metrics['Hours']
+            
+            # Display metrics
+            st.subheader("Attorney Performance Overview")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Average Hours per Attorney",
+                    f"{attorney_metrics['Hours'].mean():.1f}",
+                    help="Average hours worked per attorney"
+                )
+            
+            with col2:
+                st.metric(
+                    "Average Revenue per Attorney",
+                    f"${attorney_metrics['Amount'].mean():,.2f}",
+                    help="Average revenue generated per attorney"
+                )
+            
+            with col3:
+                st.metric(
+                    "Average Clients per Attorney",
+                    f"{attorney_metrics['Client Name'].mean():.1f}",
+                    help="Average number of clients per attorney"
+                )
+            
+            with col4:
+                st.metric(
+                    "Average Utilization Rate",
+                    f"{attorney_metrics['Utilization Rate'].mean():.1f}%",
+                    help="Average utilization rate across attorneys"
+                )
+            
+            # Attorney utilization chart
+            st.subheader("Attorney Utilization")
+            fig = px.bar(
+                attorney_metrics.sort_values('Utilization Rate', ascending=False),
+                x='Associated Attorney',
+                y='Utilization Rate',
+                title='Attorney Utilization Rates (%)'
+            )
+            fig.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="Target")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Top performers
+            st.subheader("Top Performing Attorneys")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # By revenue
+                top_revenue = attorney_metrics.nlargest(5, 'Amount')
+                fig = px.bar(
+                    top_revenue,
+                    x='Associated Attorney',
+                    y='Amount',
+                    title='Top 5 Attorneys by Revenue'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # By hours
+                top_hours = attorney_metrics.nlargest(5, 'Hours')
+                fig = px.bar(
+                    top_hours,
+                    x='Associated Attorney',
+                    y='Hours',
+                    title='Top 5 Attorneys by Hours'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Detailed metrics table
+            st.subheader("Detailed Attorney Metrics")
+            st.dataframe(
+                attorney_metrics.style.format({
+                    'Hours': '{:,.1f}',
+                    'Amount': '${:,.2f}',
+                    'Utilization Rate': '{:,.1f}%',
+                    'Avg Hourly Rate': '${:,.2f}'
+                }),
+                use_container_width=True
+            )
+            
+        except Exception as e:
+            st.error(f"Error in attorney analysis: {str(e)}")
 
     with tab5:
         st.header("Practice Areas")
-        if 'PG' in filtered_df.columns:
-            # Practice area metrics
-            practice_metrics = filtered_df.groupby('PG').agg({
-                'Hours': 'sum',
-                'Amount': 'sum',
-                'Matter Name': 'nunique'
-            }).reset_index()
-            
-            # Practice area distribution
-            st.subheader("Practice Area Distribution")
-            fig = px.pie(practice_metrics, values='Hours', names='PG',
-                         title='Hours by Practice Area')
-            st.plotly_chart(fig, use_container_width=True)
+        
+        try:
+            if 'PG' in filtered_df.columns:
+                # Practice area metrics
+                practice_metrics = filtered_df.groupby('PG').agg({
+                    'Hours': 'sum',
+                    'Amount': 'sum',
+                    'Matter Name': 'nunique',
+                    'Client Name': 'nunique',
+                    'Associated Attorney': 'nunique'
+                }).reset_index()
+                
+                # Calculate derived metrics
+                practice_metrics['Avg Rate'] = practice_metrics['Amount'] / practice_metrics['Hours']
+                practice_metrics['Revenue per Client'] = practice_metrics['Amount'] / practice_metrics['Client Name']
+                
+                # Overview metrics
+                st.subheader("Practice Area Overview")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Practice area distribution by hours
+                    fig = px.pie(
+                        practice_metrics,
+                        values='Hours',
+                        names='PG',
+                        title='Hours by Practice Area'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Practice area distribution by revenue
+                    fig = px.pie(
+                        practice_metrics,
+                        values='Amount',
+                        names='PG',
+                        title='Revenue by Practice Area'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Practice area performance metrics
+                st.subheader("Practice Area Performance")
+                fig = px.bar(
+                    practice_metrics,
+                    x='PG',
+                    y=['Hours', 'Amount'],
+                    title='Practice Area Performance Metrics',
+                    barmode='group'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Detailed metrics table
+                st.subheader("Detailed Practice Area Metrics")
+                st.dataframe(
+                    practice_metrics.style.format({
+                        'Hours': '{:,.1f}',
+                        'Amount': '${:,.2f}',
+                        'Avg Rate': '${:,.2f}',
+                        'Revenue per Client': '${:,.2f}'
+                    }),
+                    use_container_width=True
+                )
+                
+                # Practice area efficiency
+                st.subheader("Practice Area Efficiency")
+                fig = px.scatter(
+                    practice_metrics,
+                    x='Hours',
+                    y='Amount',
+                    size='Client Name',
+                    text='PG',
+                    title='Practice Area Efficiency (Hours vs Revenue)',
+                    labels={'Hours': 'Total Hours', 'Amount': 'Total Revenue', 'Client Name': 'Number of Clients'}
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+        except Exception as e:
+            st.error(f"Error in practice area analysis: {str(e)}")
 
     with tab6:
         st.header("Trending")
         
-        # Time series analysis
-        monthly_trends = filtered_df.groupby(pd.Grouper(key='Service Date', freq='M')).agg({
-            'Hours': 'sum',
-            'Amount': 'sum',
-            'Invoice Number': 'nunique'
-        }).reset_index()
-        
-        # Trending metrics visualization
-        st.subheader("Monthly Trends")
-        fig = px.line(monthly_trends, x='Service Date', y=['Hours', 'Amount'],
-                      title='Monthly Performance Trends')
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            # Time series analysis
+            monthly_trends = filtered_df.groupby(pd.Grouper(key='Service Date', freq='M')).agg({
+                'Hours': 'sum',
+                'Amount': 'sum',
+                'Invoice Number': 'nunique',
+                'Matter Name': 'nunique',
+                'Client Name': 'nunique'
+            }).reset_index()
+            
+            # Calculate derived metrics
+            monthly_trends['Avg Rate'] = monthly_trends['Amount'] / monthly_trends['Hours']
+            
+            # Overall trends
+            st.subheader("Monthly Performance Trends")
+            
+            # Hours and revenue trend
+            fig = go.Figure()
+            
+            fig.add_trace(go.Bar(
+                x=monthly_trends['Service Date'],
+                y=monthly_trends['Hours'],
+                name='Hours',
+                yaxis='y'
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=monthly_trends['Service Date'],
+                y=monthly_trends['Amount'],
+                name='Revenue',
+                yaxis='y2',
+                line=dict(color='red')
+            ))
+            
+            fig.update_layout(
+                title='Monthly Hours and Revenue Trends',
+                yaxis=dict(title='Hours', side='left'),
+                yaxis2=dict(title='Revenue', side='right', overlaying='y'),
+                showlegend=True
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Client and matter trends
+            st.subheader("Client and Matter Trends")
+            fig = px.line(
+                monthly_trends,
+                x='Service Date',
+                y=['Client Name', 'Matter Name'],
+                title='Monthly Client and Matter Counts'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Average rate trend
+            st.subheader("Rate Trends")
+            fig = px.line(
+                monthly_trends,
+                x='Service Date',
+                y='Avg Rate',
+                title='Monthly Average Rate Trend'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Detailed trends table
+            st.subheader("Detailed Monthly Metrics")
+            st.dataframe(
+                monthly_trends.style.format({
+                    'Hours': '{:,.1f}',
+                    'Amount': '${:,.2f}',
+                    'Avg Rate': '${:,.2f}',
+                    'Client Name': '{:,.0f}',
+                    'Matter Name': '{:,.0f}',
+                    'Invoice Number': '{:,.0f}'
+                }),
+                use_container_width=True
+            )
+            
+        except Exception as e:
+            st.error(f"Error in trending analysis: {str(e)}")
 
 else:
     st.error("Failed to load data. Please check your data files and try again.")
+        
