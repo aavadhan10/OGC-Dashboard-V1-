@@ -12,16 +12,33 @@ st.set_page_config(page_title="Law Firm Analytics Dashboard", layout="wide")
 @st.cache_data
 def load_data():
     try:
+        # Load main data files
         six_months = pd.read_csv('SIX_FULL_MOS.csv')
         attorneys = pd.read_csv('ATTORNEY_PG_AND_HRS.csv')
-        attorney_clients = pd.read_csv('ATTORNEY_CLIENTS.csv')
+        attorney_clients = pd.read_csv('ATTORNEY_CLIENTS.csv', skiprows=1)  # Skip header row
+        utilization = pd.read_csv('UTILIZATION.csv', skiprows=2)  # Skip header rows
+        pivot_source = pd.read_csv('PIVOT_SOURCE_1.csv', skiprows=1)  # Skip header row
         
-        # Convert date columns
+        # Convert date columns in six_months
         for date_col in ['Service Date', 'Invoice Date']:
             if date_col in six_months.columns:
                 six_months[date_col] = pd.to_datetime(six_months[date_col], errors='coerce')
         
-        return six_months, attorneys, attorney_clients
+        # Clean up attorney data
+        attorneys = attorneys[attorneys['Attorney pipeline stage'] == '🟢 Active']
+        
+        # Merge attorney target hours into main dataset
+        six_months = six_months.merge(
+            attorneys[['Attorney Name', '🎚️ Target Hours / Month']],
+            left_on='Associated Attorney',
+            right_on='Attorney Name',
+            how='left'
+        )
+        
+        # Calculate utilization against target
+        six_months['Target Hours'] = six_months['🎚️ Target Hours / Month']
+        
+        return six_months, attorneys, attorney_clients, utilization, pivot_source
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return None, None, None
@@ -43,7 +60,7 @@ def get_revenue_band(revenue):
         return "75M+"
 
 # Load data
-six_months_df, attorneys_df, attorney_clients_df = load_data()
+six_months_df, attorneys_df, attorney_clients_df, utilization_df, pivot_source_df = load_data()
 
 if six_months_df is not None:
     # Sidebar filters
@@ -102,6 +119,115 @@ if six_months_df is not None:
     with tab1:
         st.header("Overview")
         
+        # Key Performance Indicators
+        col1, col2, col3, col4 = st.columns(4)
+        
+        # Monthly bills generated
+        monthly_bills = filtered_df.groupby(pd.Grouper(key='Invoice Date', freq='M'))['Invoice Number'].nunique()
+        with col1:
+            st.metric(
+                "Monthly Bills Generated", 
+                f"{monthly_bills.iloc[-1] if not monthly_bills.empty else 0:,.0f}",
+                help="Number of unique bills generated in the last month"
+            )
+        
+        # Total billable hours
+        total_billable = filtered_df[filtered_df['Activity Type'] == 'Billable']['Hours'].sum()
+        total_hours = filtered_df['Hours'].sum()
+        with col2:
+            st.metric(
+                "Total Billable Hours", 
+                f"{total_billable:,.1f}",
+                delta=f"{(total_billable/total_hours*100):.1f}% of total",
+                help="Total billable hours and percentage of total hours"
+            )
+        
+        # Average rate
+        avg_rate = filtered_df['Rate'].mean()
+        with col3:
+            st.metric(
+                "Average Rate", 
+                f"${avg_rate:,.2f}",
+                help="Average hourly rate across all matters"
+            )
+        
+        # Total revenue
+        total_revenue = filtered_df['Amount'].sum()
+        with col4:
+            st.metric(
+                "Total Revenue", 
+                f"${total_revenue:,.2f}",
+                help="Total revenue from all matters"
+            )
+        
+        # Time series metrics
+        st.subheader("Monthly Trends")
+        
+        # Calculate monthly metrics
+        monthly_metrics = filtered_df.groupby(pd.Grouper(key='Service Date', freq='M')).agg({
+            'Hours': 'sum',
+            'Amount': 'sum',
+            'Matter Name': 'nunique',
+            'Client Name': 'nunique'
+        }).reset_index()
+        
+        # Create multi-line chart
+        fig = go.Figure()
+        
+        # Add hours trend
+        fig.add_trace(go.Scatter(
+            x=monthly_metrics['Service Date'],
+            y=monthly_metrics['Hours'],
+            name='Hours',
+            line=dict(color='blue')
+        ))
+        
+        # Add revenue trend on secondary axis
+        fig.add_trace(go.Scatter(
+            x=monthly_metrics['Service Date'],
+            y=monthly_metrics['Amount'],
+            name='Revenue',
+            yaxis='y2',
+            line=dict(color='green')
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title='Monthly Hours and Revenue Trends',
+            yaxis=dict(title='Hours'),
+            yaxis2=dict(title='Revenue', overlaying='y', side='right'),
+            hovermode='x unified'
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Utilization metrics
+        st.subheader("Utilization Metrics")
+        
+        # Calculate utilization by attorney
+        attorney_util = filtered_df.groupby('Associated Attorney').agg({
+            'Hours': 'sum',
+            'Target Hours': 'first'
+        }).reset_index()
+        
+        attorney_util['Utilization Rate'] = attorney_util.apply(
+            lambda x: (x['Hours'] / x['Target Hours'] * 100) if pd.notnull(x['Target Hours']) and x['Target Hours'] > 0 else 0,
+            axis=1
+        )
+        
+        # Create utilization chart
+        fig = px.bar(
+            attorney_util,
+            x='Associated Attorney',
+            y='Utilization Rate',
+            title='Attorney Utilization Rates (%)',
+            labels={'Utilization Rate': 'Utilization %', 'Associated Attorney': 'Attorney'}
+        )
+        
+        fig.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="Target")
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
         # Key metrics
         col1, col2, col3, col4 = st.columns(4)
         
@@ -146,6 +272,136 @@ if six_months_df is not None:
 
     with tab3:
         st.header("Client Segmentation")
+        
+        try:
+            # Calculate comprehensive client metrics
+            client_metrics = filtered_df.groupby('Client Name').agg({
+                'Amount': ['sum', 'mean'],
+                'Hours': ['sum', 'mean'],
+                'Matter Name': 'nunique',
+                'Invoice Number': 'nunique',
+                'SECTOR': lambda x: x.iloc[0] if not x.empty else None,
+                'Service Date': ['min', 'max']
+            }).reset_index()
+
+            # Flatten column names
+            client_metrics.columns = ['Client Name', 'Total Revenue', 'Avg Revenue', 
+                                    'Total Hours', 'Avg Hours', 'Matter Count',
+                                    'Invoice Count', 'Sector', 'First Service', 'Last Service']
+            
+            # Calculate revenue bands
+            client_metrics['Revenue Band'] = client_metrics['Total Revenue'].apply(get_revenue_band)
+            
+            # Calculate retention period
+            client_metrics['Retention Days'] = (
+                client_metrics['Last Service'] - client_metrics['First Service']
+            ).dt.days
+            
+            # Calculate Lifetime Value
+            client_metrics['Daily Revenue'] = client_metrics['Total Revenue'] / client_metrics['Retention Days'].clip(lower=1)
+            client_metrics['Projected Annual Value'] = client_metrics['Daily Revenue'] * 365
+            
+            # Revenue band distribution
+            st.subheader("Revenue Distribution")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                revenue_dist = client_metrics['Revenue Band'].value_counts()
+                fig = px.pie(
+                    values=revenue_dist.values,
+                    names=revenue_dist.index,
+                    title="Clients by Revenue Band"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                revenue_total = client_metrics.groupby('Revenue Band')['Total Revenue'].sum()
+                fig = px.pie(
+                    values=revenue_total.values,
+                    names=revenue_total.index,
+                    title="Revenue by Band"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Industry Analysis
+            st.subheader("Industry Analysis")
+            if 'Sector' in client_metrics.columns:
+                sector_metrics = client_metrics.groupby('Sector').agg({
+                    'Client Name': 'count',
+                    'Total Revenue': 'sum',
+                    'Total Hours': 'sum'
+                }).reset_index()
+                
+                fig = px.bar(
+                    sector_metrics,
+                    x='Sector',
+                    y=['Total Revenue', 'Total Hours'],
+                    title="Industry Metrics",
+                    barmode='group'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Client Value Analysis
+            st.subheader("Client Value Analysis")
+            
+            value_metrics = client_metrics.groupby('Revenue Band').agg({
+                'Client Name': 'count',
+                'Total Revenue': ['sum', 'mean'],
+                'Projected Annual Value': 'mean',
+                'Retention Days': ['mean', 'median'],
+                'Matter Count': 'mean'
+            }).round(2)
+            
+            value_metrics.columns = [
+                'Client Count', 'Total Revenue', 'Avg Revenue',
+                'Avg Annual Value', 'Avg Retention', 'Median Retention',
+                'Avg Matters'
+            ]
+            
+            st.dataframe(value_metrics, use_container_width=True)
+            
+            # Retention Analysis
+            st.subheader("Retention Analysis")
+            
+            # Calculate churn rate (no activity in last 90 days)
+            recent_date = filtered_df['Service Date'].max()
+            churned = (recent_date - client_metrics['Last Service']).dt.days > 90
+            churn_rate = (churned.sum() / len(churned)) * 100
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "Overall Churn Rate",
+                    f"{churn_rate:.1f}%",
+                    help="Percentage of clients with no activity in 90+ days"
+                )
+            
+            with col2:
+                st.metric(
+                    "Average Retention",
+                    f"{client_metrics['Retention Days'].mean():.0f} days",
+                    help="Average client relationship duration"
+                )
+            
+            with col3:
+                st.metric(
+                    "Active Clients",
+                    f"{(~churned).sum():,}",
+                    help="Number of clients with activity in last 90 days"
+                )
+            
+            # Retention by revenue band
+            retention_by_band = client_metrics.groupby('Revenue Band')['Retention Days'].mean().round(0)
+            fig = px.bar(
+                x=retention_by_band.index,
+                y=retention_by_band.values,
+                title="Average Retention Period by Revenue Band (Days)",
+                labels={'x': 'Revenue Band', 'y': 'Days'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as
         
         try:
             # Calculate client revenue metrics
