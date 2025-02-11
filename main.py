@@ -17,12 +17,43 @@ def check_password():
         return True
     
     password = st.sidebar.text_input("Enter Password", type="password")
-    if password == "OGC2025AI":  # Note the space at the beginning as specified
+    if password == "OGC2025AI":
         st.session_state.authenticated = True
         return True
     elif password:
         st.sidebar.error("Incorrect password")
     return False
+
+# Function to calculate revenue band
+def get_revenue_band(six_month_revenue):
+    try:
+        if pd.isna(six_month_revenue) or six_month_revenue == 0:
+            return "Under $50K"
+            
+        # Annualize the revenue (multiply by 2 since we have 6 months of data)
+        annual_revenue = float(six_month_revenue) * 2
+        
+        if annual_revenue <= 50000:
+            return "Under $50K"
+        elif annual_revenue <= 100000:
+            return "$50K-$100K"
+        elif annual_revenue <= 250000:
+            return "$100K-$250K"
+        elif annual_revenue <= 500000:
+            return "$250K-$500K"
+        elif annual_revenue <= 1000000:
+            return "$500K-$1M"
+        elif annual_revenue <= 2000000:
+            return "$1M-$2M"
+        elif annual_revenue <= 5000000:
+            return "$2M-$5M"
+        elif annual_revenue <= 10000000:
+            return "$5M-$10M"
+        else:
+            return "Over $10M"
+    except Exception as e:
+        print(f"Error processing revenue {six_month_revenue}: {str(e)}")
+        return "Under $50K"
 
 # Function to load data
 @st.cache_data
@@ -35,7 +66,7 @@ def load_data():
         utilization = pd.read_csv('UTILIZATION.csv', skiprows=2)
         pivot_source = pd.read_csv('PIVOT_SOURCE_1.csv', skiprows=1)
         
-        # Convert date columns in six_months
+        # Convert date columns
         for date_col in ['Service Date', 'Invoice Date']:
             if date_col in six_months.columns:
                 six_months[date_col] = pd.to_datetime(six_months[date_col], errors='coerce')
@@ -43,7 +74,18 @@ def load_data():
         # Clean up attorney data
         attorneys = attorneys[attorneys['Attorney pipeline stage'] == '🟢 Active']
         
-        # Merge attorney target hours into main dataset
+        # Calculate annualized revenue and revenue bands
+        client_revenue = six_months.groupby('Client Name')['Amount'].sum().reset_index()
+        client_revenue['Revenue Band'] = client_revenue['Amount'].apply(get_revenue_band)
+        
+        # Merge revenue bands back to main dataset
+        six_months = six_months.merge(
+            client_revenue[['Client Name', 'Revenue Band']],
+            on='Client Name',
+            how='left'
+        )
+        
+        # Merge attorney target hours
         six_months = six_months.merge(
             attorneys[['Attorney Name', '🎚️ Target Hours / Month']],
             left_on='Associated Attorney',
@@ -51,32 +93,12 @@ def load_data():
             how='left'
         )
         
-        # Calculate utilization against target
         six_months['Target Hours'] = six_months['🎚️ Target Hours / Month']
         
         return six_months, attorneys, attorney_clients, utilization, pivot_source
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return None, None, None, None, None
-
-# Function to calculate revenue band
-def get_revenue_band(revenue):
-    try:
-        if pd.isna(revenue) or revenue == 0:
-            return "0-10M"
-        revenue_in_millions = float(revenue) / 1000000
-        if revenue_in_millions <= 10:
-            return "0-10M"
-        elif revenue_in_millions <= 25:
-            return "10M-25M"
-        elif revenue_in_millions <= 50:
-            return "25M-50M"
-        elif revenue_in_millions <= 75:
-            return "50M-75M"
-        else:
-            return "75M+"
-    except:
-        return "0-10M"
 
 # Main app logic
 if check_password():
@@ -105,6 +127,13 @@ if check_password():
             st.error("Error with date range")
             date_range = None
 
+        # Revenue Band filter
+        revenue_bands = [
+            "Under $50K", "$50K-$100K", "$100K-$250K", "$250K-$500K",
+            "$500K-$1M", "$1M-$2M", "$2M-$5M", "$5M-$10M", "Over $10M"
+        ]
+        selected_bands = st.sidebar.multiselect('Revenue Bands', revenue_bands)
+
         # Attorney filter
         attorneys = sorted(six_months_df['Associated Attorney'].dropna().unique())
         selected_attorneys = st.sidebar.multiselect('Attorneys', attorneys)
@@ -126,6 +155,9 @@ if check_password():
                 (filtered_df['Service Date'].dt.date <= date_range[1])
             ]
         
+        if selected_bands:
+            filtered_df = filtered_df[filtered_df['Revenue Band'].isin(selected_bands)]
+            
         if selected_attorneys:
             filtered_df = filtered_df[filtered_df['Associated Attorney'].isin(selected_attorneys)]
         
@@ -136,9 +168,9 @@ if check_password():
             filtered_df = filtered_df[filtered_df['Matter Name'].isin(selected_matters)]
 
         # Tabs
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "Overview", "Client Analysis", "Client Segmentation", "Attorney Analysis", 
-            "Practice Areas", "Trending"
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+            "Overview", "Client Analysis", "Revenue Bands", "Client Segmentation", 
+            "Attorney Analysis", "Practice Areas", "Trending"
         ])
 
         with tab1:
@@ -184,7 +216,7 @@ if check_password():
                     f"${total_revenue:,.2f}",
                     help="Total revenue from all matters"
                 )
-                
+            
             # Monthly trends
             st.subheader("Monthly Performance Trends")
             monthly_metrics = filtered_df.groupby(pd.Grouper(key='Service Date', freq='M')).agg({
@@ -195,7 +227,6 @@ if check_password():
             
             fig = go.Figure()
             
-            # Add hours trend
             fig.add_trace(go.Bar(
                 x=monthly_metrics['Service Date'],
                 y=monthly_metrics['Hours'],
@@ -203,7 +234,6 @@ if check_password():
                 yaxis='y'
             ))
             
-            # Add revenue trend
             fig.add_trace(go.Scatter(
                 x=monthly_metrics['Service Date'],
                 y=monthly_metrics['Amount'],
@@ -223,8 +253,6 @@ if check_password():
 
             # Utilization metrics
             st.subheader("Utilization Overview")
-            
-            # Calculate utilization metrics by attorney
             attorney_util = filtered_df.groupby('Associated Attorney').agg({
                 'Hours': 'sum',
                 'Target Hours': 'first'
@@ -248,79 +276,141 @@ if check_password():
         with tab2:
             st.header("Client Analysis")
             
-            try:
-                # Client metrics
-                clients_df = filtered_df.groupby('Client Name').agg({
-                    'Hours': 'sum',
-                    'Amount': 'sum',
-                    'Matter Name': 'nunique',
-                    'Invoice Number': 'nunique'
-                }).reset_index()
-                
-                # Calculate averages
-                avg_revenue_per_client = clients_df['Amount'].mean()
-                avg_hours_per_client = clients_df['Hours'].mean()
-                
-                # Display metrics
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric(
-                        "Total Clients",
-                        f"{len(clients_df):,}",
-                        help="Number of unique clients"
-                    )
-                
-                with col2:
-                    st.metric(
-                        "Avg Revenue per Client",
-                        f"${avg_revenue_per_client:,.2f}",
-                        help="Average revenue generated per client"
-                    )
-                
-                with col3:
-                    st.metric(
-                        "Avg Hours per Client",
-                        f"{avg_hours_per_client:.1f}",
-                        help="Average hours spent per client"
-                    )
-                
-                # Top clients by revenue
-                st.subheader("Top Clients by Revenue")
-                top_clients = clients_df.nlargest(10, 'Amount')
-                fig = px.bar(
-                    top_clients,
-                    x='Client Name',
-                    y='Amount',
-                    title='Top 10 Clients by Revenue'
+            # Client metrics
+            clients_df = filtered_df.groupby('Client Name').agg({
+                'Hours': 'sum',
+                'Amount': 'sum',
+                'Matter Name': 'nunique',
+                'Invoice Number': 'nunique',
+                'Revenue Band': 'first'
+            }).reset_index()
+            
+            # Calculate averages
+            avg_revenue_per_client = clients_df['Amount'].mean()
+            avg_hours_per_client = clients_df['Hours'].mean()
+            
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "Total Clients",
+                    f"{len(clients_df):,}",
+                    help="Number of unique clients"
                 )
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Client hours distribution
-                st.subheader("Client Hours Distribution")
-                fig = px.histogram(
-                    clients_df,
-                    x='Hours',
-                    nbins=50,
-                    title='Distribution of Hours Across Clients'
+            
+            with col2:
+                st.metric(
+                    "Avg Revenue per Client",
+                    f"${avg_revenue_per_client:,.2f}",
+                    help="Average revenue generated per client"
                 )
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Detailed client metrics
-                st.subheader("Detailed Client Metrics")
-                st.dataframe(
-                    clients_df.sort_values('Amount', ascending=False)
-                    .style.format({
-                        'Amount': '${:,.2f}',
-                        'Hours': '{:,.1f}'
-                    }),
-                    use_container_width=True
+            
+            with col3:
+                st.metric(
+                    "Avg Hours per Client",
+                    f"{avg_hours_per_client:.1f}",
+                    help="Average hours spent per client"
                 )
-                
-            except Exception as e:
-                st.error(f"Error in client analysis: {str(e)}")
+            
+            # Top clients by revenue
+            st.subheader("Top Clients by Revenue")
+            top_clients = clients_df.nlargest(10, 'Amount')
+            fig = px.bar(
+                top_clients,
+                x='Client Name',
+                y='Amount',
+                color='Revenue Band',
+                title='Top 10 Clients by Revenue'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Client hours distribution
+            st.subheader("Client Hours Distribution")
+            fig = px.histogram(
+                clients_df,
+                x='Hours',
+                nbins=50,
+                color='Revenue Band',
+                title='Distribution of Hours Across Clients'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Detailed client metrics
+            st.subheader("Detailed Client Metrics")
+            st.dataframe(
+                clients_df.sort_values('Amount', ascending=False)
+                .style.format({
+                    'Amount': '${:,.2f}',
+                    'Hours': '{:,.1f}'
+                }),
+                use_container_width=True
+            )
 
         with tab3:
+            st.header("Revenue Band Analysis")
+            
+            # Calculate revenue band metrics
+            band_metrics = filtered_df.groupby('Revenue Band').agg({
+                'Client Name': 'nunique',
+                'Amount': 'sum',
+                'Hours': 'sum',
+                'Matter Name': 'nunique',
+                'Associated Attorney': 'nunique'
+            }).reset_index()
+            
+            # Calculate percentages
+            total_clients = band_metrics['Client Name'].sum()
+            total_revenue = band_metrics['Amount'].sum()
+            
+            band_metrics['Client %'] = (band_metrics['Client Name'] / total_clients * 100).round(1)
+            band_metrics['Revenue %'] = (band_metrics['Amount'] / total_revenue * 100).round(1)
+            
+            # Display metrics
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig = px.pie(
+                    band_metrics,
+                    values='Client Name',
+                    names='Revenue Band',
+                    title='Client Distribution by Revenue Band'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                fig = px.pie(
+                    band_metrics,
+                    values='Amount',
+                    names='Revenue Band',
+                    title='Revenue Distribution by Band'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Detailed metrics table
+            st.subheader("Revenue Band Details")
+            formatted_metrics = band_metrics.style.format({
+                'Amount': '${:,.2f}',
+                'Client %': '{:.1f}%',
+                'Revenue %': '{:.1f}%',
+                'Hours': '{:,.1f}'
+            })
+            st.dataframe(formatted_metrics, use_container_width=True)
+            
+            # Top clients in each band
+            st.subheader("Top Clients by Revenue Band")
+            for band in revenue_bands:
+                band_clients = filtered_df[filtered_df['Revenue Band'] == band]
+                if not band_clients.empty:
+                    st.write(f"**{band}**")
+                    top_clients = band_clients.groupby('Client Name')['Amount'].sum()\
+                        .sort_values(ascending=False)\
+                        .head(5)\
+                        .reset_index()
+                    top_clients['Amount'] = top_clients['Amount'].apply(lambda x: f"${x:,.2f}")
+                    st.dataframe(top_clients, use_container_width=True)
+
+        with tab4:
             st.header("Client Segmentation")
             
             try:
@@ -331,24 +421,24 @@ if check_password():
                     'Matter Name': 'nunique',
                     'Invoice Number': 'nunique',
                     'SECTOR': lambda x: x.iloc[0] if not x.empty else None,
-                    'Service Date': ['min', 'max']
+                    'Service Date': ['min', 'max'],
+                    'Revenue Band': 'first'
                 }).reset_index()
 
                 # Flatten column names
                 client_metrics.columns = ['Client Name', 'Total Revenue', 'Avg Revenue', 
                                         'Total Hours', 'Avg Hours', 'Matter Count',
-                                        'Invoice Count', 'Sector', 'First Service', 'Last Service']
-                
-                # Calculate revenue bands
-                client_metrics['Revenue Band'] = client_metrics['Total Revenue'].apply(get_revenue_band)
+                                        'Invoice Count', 'Sector', 'First Service', 'Last Service',
+                                        'Revenue Band']
                 
                 # Calculate retention period
                 client_metrics['Retention Days'] = (
                     client_metrics['Last Service'] - client_metrics['First Service']
                 ).dt.days
                 
-                # Calculate Lifetime Value
-                client_metrics['Daily Revenue'] = client_metrics['Total Revenue'] / client_metrics['Retention Days'].clip(lower=1)
+                # Calculate Daily Revenue
+                client_metrics['Daily Revenue'] = client_metrics['Total Revenue'] / \
+                    client_metrics['Retention Days'].clip(lower=1)
                 client_metrics['Projected Annual Value'] = client_metrics['Daily Revenue'] * 365
                 
                 # Revenue band distribution
@@ -376,7 +466,7 @@ if check_password():
                 # Industry Analysis
                 st.subheader("Industry Analysis")
                 if 'Sector' in client_metrics.columns:
-                    sector_metrics = client_metrics.groupby('Sector').agg({
+                    sector_metrics = client_metrics.groupby(['Sector', 'Revenue Band']).agg({
                         'Client Name': 'count',
                         'Total Revenue': 'sum',
                         'Total Hours': 'sum'
@@ -386,6 +476,7 @@ if check_password():
                         sector_metrics,
                         x='Sector',
                         y=['Total Revenue', 'Total Hours'],
+                        color='Revenue Band',
                         title="Industry Metrics",
                         barmode='group'
                     )
@@ -393,20 +484,26 @@ if check_password():
 
                 # Client Value Analysis
                 st.subheader("Client Value Analysis")
+                
                 # Get most recent date from the data
                 recent_date = filtered_df['Service Date'].max()
                 
                 # Calculate LTV metrics
-                client_metrics['Monthly Revenue'] = client_metrics['Total Revenue'] / (client_metrics['Retention Days'] / 30).clip(lower=1)
-                client_metrics['Avg Monthly Revenue'] = client_metrics['Monthly Revenue'].rolling(window=3, min_periods=1).mean()
+                client_metrics['Monthly Revenue'] = client_metrics['Total Revenue'] / \
+                    (client_metrics['Retention Days'] / 30).clip(lower=1)
+                client_metrics['Avg Monthly Revenue'] = client_metrics['Monthly Revenue']\
+                    .rolling(window=3, min_periods=1).mean()
+                
                 client_metrics['Churn Probability'] = np.where(
                     (recent_date - client_metrics['Last Service']).dt.days > 90,
                     0.8,  # High churn probability for inactive clients
                     0.2   # Lower churn probability for active clients
                 )
-                client_metrics['LTV'] = (client_metrics['Avg Monthly Revenue'] / client_metrics['Churn Probability']) * 12
                 
-                # Calculate revenue band metrics
+                client_metrics['LTV'] = (client_metrics['Avg Monthly Revenue'] / \
+                    client_metrics['Churn Probability']) * 12
+                
+                # Calculate value band metrics
                 value_metrics = client_metrics.groupby('Revenue Band').agg({
                     'Client Name': 'count',
                     'Total Revenue': ['sum', 'mean'],
@@ -424,7 +521,8 @@ if check_password():
                 
                 # Add revenue concentration
                 total_revenue = value_metrics['Total Revenue'].sum()
-                value_metrics['Revenue Concentration (%)'] = (value_metrics['Total Revenue'] / total_revenue * 100).round(1)
+                value_metrics['Revenue Concentration (%)'] = \
+                    (value_metrics['Total Revenue'] / total_revenue * 100).round(1)
                 
                 # Display value metrics
                 formatted_metrics = value_metrics.style.format({
@@ -469,8 +567,8 @@ if check_password():
                     client_metrics,
                     x='LTV',
                     nbins=50,
-                    title='Distribution of Client Lifetime Values',
-                    labels={'LTV': 'Lifetime Value ($)'}
+                    color='Revenue Band',
+                    title='Distribution of Client Lifetime Values'
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
@@ -489,25 +587,15 @@ if check_password():
                     use_container_width=True
                 )
                 
-                # Retention by revenue band
-                retention_by_band = client_metrics.groupby('Revenue Band')['Retention Days'].mean().round(0)
-                fig = px.bar(
-                    x=retention_by_band.index,
-                    y=retention_by_band.values,
-                    title="Average Retention Period by Revenue Band (Days)",
-                    labels={'x': 'Revenue Band', 'y': 'Days'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                
             except Exception as e:
                 st.error(f"Error in client segmentation analysis: {str(e)}")
 
-        with tab4:
+        with tab5:
             st.header("Attorney Analysis")
             
             try:
                 # Attorney productivity metrics
-                attorney_metrics = filtered_df.groupby('Associated Attorney').agg({
+                attorney_metrics = filtered_df.groupby(['Associated Attorney', 'Revenue Band']).agg({
                     'Hours': 'sum',
                     'Amount': 'sum',
                     'Client Name': 'nunique',
@@ -520,7 +608,8 @@ if check_password():
                     attorney_metrics['Target Hours'].fillna(100)) * 100
                     
                 # Calculate average hourly rate
-                attorney_metrics['Avg Hourly Rate'] = attorney_metrics['Amount'] / attorney_metrics['Hours']
+                attorney_metrics['Avg Hourly Rate'] = attorney_metrics['Amount'] / \
+                    attorney_metrics['Hours']
                 
                 # Display metrics
                 st.subheader("Attorney Performance Overview")
@@ -561,6 +650,7 @@ if check_password():
                     attorney_metrics.sort_values('Utilization Rate', ascending=False),
                     x='Associated Attorney',
                     y='Utilization Rate',
+                    color='Revenue Band',
                     title='Attorney Utilization Rates (%)'
                 )
                 fig.add_hline(y=100, line_dash="dash", line_color="red", annotation_text="Target")
@@ -578,6 +668,7 @@ if check_password():
                         top_revenue,
                         x='Associated Attorney',
                         y='Amount',
+                        color='Revenue Band',
                         title='Top 5 Attorneys by Revenue'
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -589,6 +680,7 @@ if check_password():
                         top_hours,
                         x='Associated Attorney',
                         y='Hours',
+                        color='Revenue Band',
                         title='Top 5 Attorneys by Hours'
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -608,13 +700,13 @@ if check_password():
             except Exception as e:
                 st.error(f"Error in attorney analysis: {str(e)}")
 
-        with tab5:
+        with tab6:
             st.header("Practice Areas")
             
             try:
                 if 'PG' in filtered_df.columns:
                     # Practice area metrics
-                    practice_metrics = filtered_df.groupby('PG').agg({
+                    practice_metrics = filtered_df.groupby(['PG', 'Revenue Band']).agg({
                         'Hours': 'sum',
                         'Amount': 'sum',
                         'Matter Name': 'nunique',
@@ -624,7 +716,8 @@ if check_password():
                     
                     # Calculate derived metrics
                     practice_metrics['Avg Rate'] = practice_metrics['Amount'] / practice_metrics['Hours']
-                    practice_metrics['Revenue per Client'] = practice_metrics['Amount'] / practice_metrics['Client Name']
+                    practice_metrics['Revenue per Client'] = practice_metrics['Amount'] / \
+                        practice_metrics['Client Name']
                     
                     # Overview metrics
                     st.subheader("Practice Area Overview")
@@ -651,12 +744,13 @@ if check_password():
                         )
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    # Practice area performance metrics
-                    st.subheader("Practice Area Performance")
+                    # Practice area performance metrics by revenue band
+                    st.subheader("Practice Area Performance by Revenue Band")
                     fig = px.bar(
                         practice_metrics,
                         x='PG',
                         y=['Hours', 'Amount'],
+                        color='Revenue Band',
                         title='Practice Area Performance Metrics',
                         barmode='group'
                     )
@@ -681,21 +775,29 @@ if check_password():
                         x='Hours',
                         y='Amount',
                         size='Client Name',
+                        color='Revenue Band',
                         text='PG',
                         title='Practice Area Efficiency (Hours vs Revenue)',
-                        labels={'Hours': 'Total Hours', 'Amount': 'Total Revenue', 'Client Name': 'Number of Clients'}
+                        labels={
+                            'Hours': 'Total Hours', 
+                            'Amount': 'Total Revenue', 
+                            'Client Name': 'Number of Clients'
+                        }
                     )
                     st.plotly_chart(fig, use_container_width=True)
                     
             except Exception as e:
                 st.error(f"Error in practice area analysis: {str(e)}")
 
-        with tab6:
+        with tab7:
             st.header("Trending")
             
             try:
                 # Time series analysis
-                monthly_trends = filtered_df.groupby(pd.Grouper(key='Service Date', freq='M')).agg({
+                monthly_trends = filtered_df.groupby([
+                    pd.Grouper(key='Service Date', freq='M'),
+                    'Revenue Band'
+                ]).agg({
                     'Hours': 'sum',
                     'Amount': 'sum',
                     'Invoice Number': 'nunique',
@@ -712,60 +814,77 @@ if check_password():
                 # Hours and revenue trend
                 fig = go.Figure()
                 
-                fig.add_trace(go.Bar(
-                    x=monthly_trends['Service Date'],
-                    y=monthly_trends['Hours'],
-                    name='Hours',
-                    yaxis='y'
-                ))
+                # Add bars for hours by revenue band
+                for band in revenue_bands:
+                    band_data = monthly_trends[monthly_trends['Revenue Band'] == band]
+                    if not band_data.empty:
+                        fig.add_trace(go.Bar(
+                            x=band_data['Service Date'],
+                            y=band_data['Hours'],
+                            name=f'Hours ({band})',
+                            yaxis='y'
+                        ))
                 
+                # Add line for total revenue
+                revenue_by_month = monthly_trends.groupby('Service Date')['Amount'].sum().reset_index()
                 fig.add_trace(go.Scatter(
-                    x=monthly_trends['Service Date'],
-                    y=monthly_trends['Amount'],
-                    name='Revenue',
+                    x=revenue_by_month['Service Date'],
+                    y=revenue_by_month['Amount'],
+                    name='Total Revenue',
                     yaxis='y2',
                     line=dict(color='red')
                 ))
                 
                 fig.update_layout(
-                    title='Monthly Hours and Revenue Trends',
+                    title='Monthly Hours by Revenue Band and Total Revenue',
                     yaxis=dict(title='Hours', side='left'),
                     yaxis2=dict(title='Revenue', side='right', overlaying='y'),
+                    barmode='stack',
                     showlegend=True
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Client and matter trends
+                # Client and matter trends by revenue band
                 st.subheader("Client and Matter Trends")
                 fig = px.line(
                     monthly_trends,
                     x='Service Date',
                     y=['Client Name', 'Matter Name'],
-                    title='Monthly Client and Matter Counts'
+                    color='Revenue Band',
+                    title='Monthly Client and Matter Counts by Revenue Band'
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Average rate trend
+                # Average rate trend by revenue band
                 st.subheader("Rate Trends")
                 fig = px.line(
                     monthly_trends,
                     x='Service Date',
                     y='Avg Rate',
-                    title='Monthly Average Rate Trend'
+                    color='Revenue Band',
+                    title='Monthly Average Rate Trend by Revenue Band'
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # Detailed trends table
                 st.subheader("Detailed Monthly Metrics")
+                
+                # Pivot the monthly trends for better visualization
+                pivot_trends = monthly_trends.pivot_table(
+                    index='Service Date',
+                    columns='Revenue Band',
+                    values=['Hours', 'Amount', 'Avg Rate'],
+                    aggfunc='sum'
+                ).round(2)
+                
                 st.dataframe(
-                    monthly_trends.style.format({
-                        'Hours': '{:,.1f}',
-                        'Amount': '${:,.2f}',
-                        'Avg Rate': '${:,.2f}',
-                        'Client Name': '{:,.0f}',
-                        'Matter Name': '{:,.0f}',
-                        'Invoice Number': '{:,.0f}'
+                    pivot_trends.style.format({
+                        ('Hours', band): '{:,.1f}' for band in revenue_bands
+                    }).format({
+                        ('Amount', band): '${:,.2f}' for band in revenue_bands
+                    }).format({
+                        ('Avg Rate', band): '${:,.2f}' for band in revenue_bands
                     }),
                     use_container_width=True
                 )
@@ -778,4 +897,3 @@ if check_password():
 else:
     st.title("OGC Analytics Dashboard")
     st.write("Please enter the password in the sidebar to access the dashboard.")
-
