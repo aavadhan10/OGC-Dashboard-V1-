@@ -17,7 +17,7 @@ def check_password():
         return True
     
     password = st.sidebar.text_input("Enter Password", type="password")
-    if password == "OGC2025AI":  # Note the space at the beginning as specified
+    if password == "OGC2025AI":
         st.session_state.authenticated = True
         return True
     elif password:
@@ -62,20 +62,39 @@ def load_data():
 # Function to calculate revenue band
 def get_revenue_band(revenue):
     try:
+        # Debug print
+        print(f"Processing revenue value: {revenue}")
+        
         if pd.isna(revenue) or revenue == 0:
             return "0-10M"
-        revenue_in_millions = float(revenue) / 1000000
-        if revenue_in_millions <= 10:
+            
+        # Ensure we're working with a float
+        if isinstance(revenue, str):
+            revenue = float(revenue.replace('$', '').replace(',', ''))
+        else:
+            revenue = float(revenue)
+            
+        # Calculate revenue in millions
+        revenue_in_millions = revenue / 1000000
+        print(f"Revenue in millions: {revenue_in_millions}")
+        
+        # Annualize the revenue (assuming the data is for 6 months)
+        annualized_revenue = revenue_in_millions * 2
+        print(f"Annualized revenue in millions: {annualized_revenue}")
+        
+        # Use annualized revenue for band calculation
+        if annualized_revenue <= 10:
             return "0-10M"
-        elif revenue_in_millions <= 25:
+        elif annualized_revenue <= 25:
             return "10M-25M"
-        elif revenue_in_millions <= 50:
+        elif annualized_revenue <= 50:
             return "25M-50M"
-        elif revenue_in_millions <= 75:
+        elif annualized_revenue <= 75:
             return "50M-75M"
         else:
             return "75M+"
-    except:
+    except Exception as e:
+        print(f"Error in revenue band calculation: {str(e)}")
         return "0-10M"
 
 # Main app logic
@@ -324,6 +343,17 @@ if check_password():
             st.header("Client Segmentation")
             
             try:
+                # First, let's debug print some information about the Amount column
+                st.write("Sample of raw Amount values:")
+                st.write(filtered_df['Amount'].head())
+                st.write(f"Total number of entries: {len(filtered_df)}")
+                st.write(f"Number of unique clients: {filtered_df['Client Name'].nunique()}")
+                
+                # Calculate total revenue per client first
+                total_revenue_per_client = filtered_df.groupby('Client Name')['Amount'].sum().reset_index()
+                st.write("Sample of total revenue per client:")
+                st.write(total_revenue_per_client.head())
+                
                 # Calculate comprehensive client metrics
                 client_metrics = filtered_df.groupby('Client Name').agg({
                     'Amount': ['sum', 'mean'],
@@ -351,6 +381,9 @@ if check_password():
                 client_metrics['Daily Revenue'] = client_metrics['Total Revenue'] / client_metrics['Retention Days'].clip(lower=1)
                 client_metrics['Projected Annual Value'] = client_metrics['Daily Revenue'] * 365
                 
+                # Display revenue band distribution
+                st.write("Revenue Band Distribution:")
+                st.write(client_metrics['Revenue Band'].value_counts())
                 # Revenue band distribution
                 st.subheader("Revenue Distribution")
                 col1, col2 = st.columns(2)
@@ -390,9 +423,10 @@ if check_password():
                         barmode='group'
                     )
                     st.plotly_chart(fig, use_container_width=True)
-
+                
                 # Client Value Analysis
                 st.subheader("Client Value Analysis")
+                
                 # Get most recent date from the data
                 recent_date = filtered_df['Service Date'].max()
                 
@@ -778,3 +812,5 @@ if check_password():
 else:
     st.title("OGC Analytics Dashboard")
     st.write("Please enter the password in the sidebar to access the dashboard.")
+            
+
