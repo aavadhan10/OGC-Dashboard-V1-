@@ -778,5 +778,4 @@ if check_password():
 else:
     st.title("OGC Analytics Dashboard")
     st.write("Please enter the password in the sidebar to access the dashboard.")
-            
 
