@@ -17,7 +17,7 @@ def check_password():
         return True
     
     password = st.sidebar.text_input("Enter Password", type="password")
-    if password == " OGC2025AI":  # Note the space at the beginning as specified
+    if password == "OGC2025AI":  # Note the space at the beginning as specified
         st.session_state.authenticated = True
         return True
     elif password:
