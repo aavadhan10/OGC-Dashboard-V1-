@@ -188,14 +188,20 @@ if check_password():
                     help="Number of unique bills generated in the last month"
                 )
             
-            # Total billable hours
-            total_billable = filtered_df[filtered_df['Activity Type'] == 'Billable']['Hours'].sum()
+           # Total billable hours
+            # Add debug prints to check activity types
+            st.write("Unique Activity Types:", filtered_df['Activity Type'].unique())
+            
+            # Clean up activity type values and make case-insensitive comparison
+            filtered_df['Activity Type'] = filtered_df['Activity Type'].str.strip().str.lower()
+            total_billable = filtered_df[filtered_df['Activity Type'] == 'billable']['Hours'].sum()
             total_hours = filtered_df['Hours'].sum()
+            
             with col2:
                 st.metric(
                     "Total Billable Hours", 
                     f"{total_billable:,.1f}",
-                    delta=f"{(total_billable/total_hours*100):.1f}% of total",
+                    delta=f"{(total_billable/total_hours*100):.1f}% of total" if total_hours > 0 else "0%",
                     help="Total billable hours and percentage of total hours"
                 )
             
