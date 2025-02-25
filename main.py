@@ -675,9 +675,9 @@ if check_password():
                     st.dataframe(top_clients, use_container_width=True, height=200)
 
         with tab4:
-    st.header("Client Segmentation")
-    
-    try:
+            st.header("Client Segmentation")
+        
+        try:
         # Calculate comprehensive client metrics
         client_metrics = filtered_df.groupby('Client Name').agg({
             'Amount': ['sum', 'mean'],
