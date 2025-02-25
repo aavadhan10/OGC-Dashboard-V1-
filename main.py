@@ -673,15 +673,8 @@ if check_password():
                         .reset_index()
                     top_clients['Amount'] = top_clients['Amount'].apply(lambda x: f"${x:,.2f}")
                     st.dataframe(top_clients, use_container_width=True, height=200)
-            with tab4:
-    st.header("Client Segmentation")
-    
-    try:
-        # Calculate comprehensive client metrics
-        client_metrics = filtered_df.groupby('Client Name').agg({
-            'Amount': ['sum', 'mean'],
-            'Hours': ['sum', 'mean'],
-            'Matter Name': 'nunique',
+
+        ame': 'nunique',
             'Invoice Number': 'nunique',
             'PG': lambda x: x.iloc[0] if not x.empty else None,
             'Service Date': ['min', 'max'],
@@ -1421,7 +1414,8 @@ with tab7:
         
     except Exception as e:
         st.error(f"Error in trending analysis: {str(e)}")
-        with tab8:
+
+with tab8:
     st.header("Attorney Fx Analysis")
     
     try:
@@ -1646,4 +1640,5 @@ with tab7:
 else:
     st.title("OGC Analytics Dashboard")
     st.write("Please enter the password in the sidebar to access the dashboard.")
-      
+        
+
