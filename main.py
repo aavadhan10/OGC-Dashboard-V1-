@@ -674,7 +674,15 @@ if check_password():
                     top_clients['Amount'] = top_clients['Amount'].apply(lambda x: f"${x:,.2f}")
                     st.dataframe(top_clients, use_container_width=True, height=200)
 
-        ame': 'nunique',
+        with tab4:
+    st.header("Client Segmentation")
+    
+    try:
+        # Calculate comprehensive client metrics
+        client_metrics = filtered_df.groupby('Client Name').agg({
+            'Amount': ['sum', 'mean'],
+            'Hours': ['sum', 'mean'],
+            'Matter Name': 'nunique',
             'Invoice Number': 'nunique',
             'PG': lambda x: x.iloc[0] if not x.empty else None,
             'Service Date': ['min', 'max'],
@@ -1640,5 +1648,3 @@ with tab8:
 else:
     st.title("OGC Analytics Dashboard")
     st.write("Please enter the password in the sidebar to access the dashboard.")
-        
-
